@@ -1116,12 +1116,18 @@ void mp::Daemon::purge(const PurgeRequest* request, grpc::ServerWriter<PurgeRepl
                        std::promise<grpc::Status>* status_promise) // clang-format off
 try // clang-format on
 {
+    PurgeReply response;
+
     for (const auto& del : deleted_instances)
+    {
         release_resources(del.first);
+        response.add_purged_instances(del.first);
+    }
 
     deleted_instances.clear();
     persist_instances();
 
+    server->Write(response);
     status_promise->set_value(grpc::Status::OK);
 }
 catch (const std::exception& e)
