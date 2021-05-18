@@ -1882,6 +1882,7 @@ void mp::Daemon::delet(const DeleteRequest* request, grpc::ServerWriter<DeleteRe
 try // clang-format on
 {
     mpl::ClientLogger<DeleteReply> logger{mpl::level_from(request->verbosity_level()), *config->logger, server};
+    DeleteReply response;
 
     const auto [operational_instances_to_delete, trashed_instances_to_delete, status] =
         find_instances_to_delete(request->instance_names().instance_name(), vm_instances, deleted_instances);
@@ -1903,7 +1904,10 @@ try // clang-format on
             instance->shutdown();
 
             if (purge)
+            {
                 release_resources(name);
+                response.add_purged_instances(name);
+            }
             else
             {
                 deleted_instances[name] = std::move(instance);
@@ -1920,12 +1924,14 @@ try // clang-format on
                 assert(vm_instance_specs[name].deleted);
                 release_resources(name);
                 deleted_instances.erase(name);
+                response.add_purged_instances(name);
             }
         }
 
         persist_instances();
     }
 
+    server->Write(response);
     status_promise->set_value(status);
 }
 catch (const std::exception& e)
