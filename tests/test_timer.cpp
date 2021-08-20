@@ -37,87 +37,82 @@ struct Timer : public testing::Test
     std::atomic_bool timedout = false;
     std::condition_variable cv;
     std::mutex cv_m;
+    const std::chrono::milliseconds default_timeout{10};
+    const std::chrono::milliseconds test_sleep{20};
+    const std::chrono::seconds default_wait{1};
 };
 } // namespace
 
 TEST_F(Timer, times_out)
 {
-    mpu::Timer t{duration_cast<seconds>(1ms), [this]() {
-                     {
-                         std::lock_guard<std::mutex> lk{cv_m};
-                         timedout.store(true);
-                     }
+    mpu::Timer t{default_timeout, [this]()
+                 {
+                     timedout.store(true);
                      cv.notify_all();
                  }};
-    std::unique_lock<std::mutex> lk(cv_m);
 
     t.start();
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
 
-    cv.wait_for(lk, 10ms); // Windows CI needs longer...
+    std::unique_lock<std::mutex> lk(cv_m);
+    cv.wait_for(lk, default_wait); // Windows CI needs longer...
 
     ASSERT_TRUE(timedout.load()) << "Should have timed out";
 }
 
 TEST_F(Timer, stops)
 {
-    mpu::Timer t{duration_cast<seconds>(10s), [this]() { timedout.store(true); }};
+    mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
 
     t.start();
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
 
     t.stop();
-    std::this_thread::sleep_for(5ms);
+    std::this_thread::sleep_for(test_sleep);
 
     ASSERT_FALSE(timedout.load()) << "Should not have timed out";
 }
 
 TEST_F(Timer, pauses)
 {
-    mpu::Timer t{duration_cast<seconds>(10s), [this]() { timedout.store(true); }};
+    mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
 
     t.start();
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
 
     t.pause();
-    std::this_thread::sleep_for(5ms);
+    std::this_thread::sleep_for(test_sleep);
 
     ASSERT_FALSE(timedout.load()) << "Should not have timed out";
 }
 
 TEST_F(Timer, resumes)
 {
-    const std::chrono::milliseconds timeout(10);
-
-    mpu::Timer t{duration_cast<seconds>(timeout), [this]() {
-                     {
-                         std::lock_guard<std::mutex> lk{cv_m};
-                         timedout.store(true);
-                     }
+    mpu::Timer t{default_timeout, [this]()
+                 {
+                     timedout.store(true);
                      cv.notify_all();
                  }};
-    std::unique_lock<std::mutex> lk(cv_m);
 
     t.start();
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
 
-    lk.unlock();
-
     t.pause();
 
-    std::this_thread::sleep_for(timeout + 5ms);
-    lk.lock();
+    std::this_thread::sleep_for(test_sleep);
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
 
     t.resume();
 
-    cv.wait_for(lk, timeout); // Windows CI needs longer...
+    std::unique_lock<std::mutex> lk(cv_m);
+    cv.wait_for(lk, default_wait); // Windows CI needs longer...
+
     ASSERT_TRUE(timedout.load()) << "Should have timed out now";
 }
 
 TEST_F(Timer, stops_paused)
 {
-    mpu::Timer t{duration_cast<seconds>(10s), [this]() { timedout.store(true); }};
+    mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
 
     t.start();
     ASSERT_FALSE(timedout.load()) << "Should not have timed out yet";
@@ -125,7 +120,7 @@ TEST_F(Timer, stops_paused)
     t.pause();
 
     t.stop();
-    std::this_thread::sleep_for(5ms);
+    std::this_thread::sleep_for(test_sleep);
 
     ASSERT_FALSE(timedout.load()) << "Should not have timed out";
 }
@@ -133,12 +128,12 @@ TEST_F(Timer, stops_paused)
 TEST_F(Timer, cancels)
 {
     {
-        mpu::Timer t{duration_cast<seconds>(10s), [this]() { timedout.store(true); }};
+        mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
         t.start();
     }
     ASSERT_FALSE(timedout.load()) << "Should not have timed out";
 
-    std::this_thread::sleep_for(5ms);
+    std::this_thread::sleep_for(test_sleep);
     ASSERT_FALSE(timedout.load()) << "Should not have timed out still";
 }
 
@@ -146,7 +141,8 @@ TEST_F(Timer, restarts)
 {
     int count = 0;
 
-    mpu::Timer t{1s, [this, &count]() {
+    mpu::Timer t{500ms, [this, &count]()
+                 {
                      {
                          std::lock_guard<std::mutex> lk{cv_m};
                          ++count;
@@ -155,15 +151,15 @@ TEST_F(Timer, restarts)
                  }};
 
     t.start();
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(250ms);
 
     t.start();
-    std::this_thread::sleep_for(500ms);
+    std::this_thread::sleep_for(250ms);
 
-    std::unique_lock<std::mutex> lk(cv_m);
     ASSERT_EQ(count, 0) << "Should not have timed out yet";
 
-    cv.wait_for(lk, 2000ms); // Windows CI needs longer...
+    std::unique_lock<std::mutex> lk(cv_m);
+    cv.wait_for(lk, default_wait); // Windows CI needs longer...
     ASSERT_EQ(count, 1) << "Should have timed out once now";
 }
 
@@ -178,16 +174,18 @@ TEST_F(Timer, stopped_ignores_pause)
 
 TEST_F(Timer, stopped_ignores_resume)
 {
-    mpu::Timer t{0s, [this]() { timedout.store(true); }};
+    mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
 
+    t.stop();
     t.resume();
 
+    std::this_thread::sleep_for(test_sleep);
     ASSERT_FALSE(timedout.load()) << "Should not have timed out";
 }
 
 TEST_F(Timer, running_ignores_resume)
 {
-    mpu::Timer t{0s, [this]() { timedout.store(true); }};
+    mpu::Timer t{default_timeout, [this]() { timedout.store(true); }};
 
     t.start();
     t.resume();
